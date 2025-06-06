@@ -55,8 +55,8 @@ const int PWMLightChannel = 3;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-const char* ssid     = "Khanh Lê";      // Thay bằng SSID Wi-Fi của bạn
-const char* password = "anna461982";     // Thay bằng mật khẩu Wi-Fi của bạn
+const char* ssid     = "LeThanh";      // Thay bằng SSID Wi-Fi của bạn
+const char* password = "14052004";     // Thay bằng mật khẩu Wi-Fi của bạn
 
 AsyncWebServer server(80);
 AsyncWebSocket wsCamera("/Camera");
@@ -152,7 +152,7 @@ const char* htmlInterface PROGMEM = R"HTMLINTERFACE(
     }
     .toggle-container {
       margin: 20px auto;
-      width: 200px;
+      width: 320px;
     }
     .toggle-button {
       background-color: #4CAF50;
@@ -164,6 +164,20 @@ const char* htmlInterface PROGMEM = R"HTMLINTERFACE(
     }
     .toggle-button.off {
       background-color: #f44336;
+    }
+    .toggle-container button {
+      margin: 10px;
+    }
+    #resetTarget {
+      background-color: #2196F3;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    #resetTarget:hover {
+      background-color: #1976D2;
     }
   </style>
 </head>
@@ -177,22 +191,23 @@ const char* htmlInterface PROGMEM = R"HTMLINTERFACE(
 
   <div class="toggle-container">
     <button id="modeToggle" class="toggle-button" onclick="toggleMode()">Auto Mode: ON</button>
+    <button id="resetTarget" onclick="resetTarget()">Reset Target</button>
   </div>
 
   <table id="mainTable" style="width:320px;margin:auto;table-layout:fixed" CELLSPACING=10>
     <tr>
       <td></td>
-      <td class="button" onmousedown='startMove("MoveCar","1")' onmouseup='stopMove()' ontouchstart='startMove("MoveCar","1")' ontouchend='stopMove()'><span class="arrows">↑</span></td>
+      <td class="button" onmousedown='startMove("MoveCar","1")' onmouseup='stopMove()' ontouchstart='startMove("MoveCar","1")' ontouchend='stopMove()'><span class="arrows">&uarr;</span></td>
       <td></td>
     </tr>
     <tr>
-      <td class="button" onmousedown='startMove("MoveCar","3")' onmouseup='stopMove()' ontouchstart='startMove("MoveCar","3")' ontouchend='stopMove()'><span class="arrows">←</span></td>
+      <td class="button" onmousedown='startMove("MoveCar","3")' onmouseup='stopMove()' ontouchstart='startMove("MoveCar","3")' ontouchend='stopMove()'><span class="arrows">&larr;</span></td>
       <td class="button"></td>
-      <td class="button" onmousedown='startMove("MoveCar","4")' onmouseup='stopMove()' ontouchstart='startMove("MoveCar","4")' ontouchend='stopMove()'><span class="arrows">→</span></td>
+      <td class="button" onmousedown='startMove("MoveCar","4")' onmouseup='stopMove()' ontouchstart='startMove("MoveCar","4")' ontouchend='stopMove()'><span class="arrows">&rarr;</span></td>
     </tr>
     <tr>
       <td></td>
-      <td class="button" onmousedown='startMove("MoveCar","2")' onmouseup='stopMove()' ontouchstart='startMove("MoveCar","2")' ontouchend='stopMove()'><span class="arrows">↓</span></td>
+      <td class="button" onmousedown='startMove("MoveCar","2")' onmouseup='stopMove()' ontouchstart='startMove("MoveCar","2")' ontouchend='stopMove()'><span class="arrows">&darr;</span></td>
       <td></td>
     </tr>
     <tr><td colspan="3"><hr></td></tr>
@@ -215,184 +230,288 @@ const char* htmlInterface PROGMEM = R"HTMLINTERFACE(
   </table>
 
   <script>
-    var webSocketCameraUrl = "ws://" + window.location.hostname + "/Camera";
-    var webSocketCarInputUrl = "ws://" + window.location.hostname + "/CarInput";
-    var websocketCamera;
-    var websocketCarInput;
-    let model;
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    const result = document.getElementById('result');
-    let isManualMode = false;
-    let moveInterval = null;
+  var webSocketCameraUrl = "ws://" + window.location.hostname + "/Camera";
+  var webSocketCarInputUrl = "ws://" + window.location.hostname + "/CarInput";
+  var websocketCamera;
+  var websocketCarInput;
+  let model;
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const result = document.getElementById('result');
+  let isManualMode = false;
+  let moveInterval = null;
+  let selectedTarget = null;
+  let lastDetectionTime = Date.now();
+  let lastFpsTime = Date.now(); // Thêm biến cho FPS
+  let frameCount = 0; // Đếm khung hình
+  let fps = 0; // Lưu giá trị FPS
 
-    function initCameraWebSocket() {
-      websocketCamera = new WebSocket(webSocketCameraUrl);
-      websocketCamera.binaryType = 'blob';
-      websocketCamera.onopen = function(event) {
-        console.log("Camera WebSocket opened");
-        startDetection();
-      };
-      websocketCamera.onclose = function(event) {
-        setTimeout(initCameraWebSocket, 2000);
-      };
-      websocketCamera.onmessage = function(event) {
-        var imageId = document.getElementById("cameraImage");
-        imageId.src = URL.createObjectURL(event.data);
-      };
+  function initCameraWebSocket() {
+    websocketCamera = new WebSocket(webSocketCameraUrl);
+    websocketCamera.binaryType = 'blob';
+    websocketCamera.onopen = function(event) {
+      console.log("Camera WebSocket opened");
+      startDetection();
+    };
+    websocketCamera.onclose = function(event) {
+      console.log("Camera WebSocket closed, reconnecting in 2s...");
+      setTimeout(initCameraWebSocket, 2000);
+    };
+    websocketCamera.onerror = function(event) {
+      console.log("Camera WebSocket error: ", event);
+    };
+    websocketCamera.onmessage = function(event) {
+      var imageId = document.getElementById("cameraImage");
+      imageId.src = URL.createObjectURL(event.data);
+    };
+  }
+
+  function initCarInputWebSocket() {
+    websocketCarInput = new WebSocket(webSocketCarInputUrl);
+    websocketCarInput.onopen = function(event) {
+      console.log("Car Input WebSocket opened");
+      var speedButton = document.getElementById("Speed");
+      sendButtonInput("Speed", speedButton.value);
+      var lightButton = document.getElementById("Light");
+      sendButtonInput("Light", lightButton.value);
+    };
+    websocketCarInput.onclose = function(event) {
+      console.log("Car Input WebSocket closed, reconnecting in 2s...");
+      setTimeout(initCarInputWebSocket, 2000);
+    };
+    websocketCarInput.onerror = function(event) {
+      console.log("Car Input WebSocket error: ", event);
+    };
+    websocketCarInput.onmessage = function(event) {
+      console.log("Received from ESP32: " + event.data);
+    };
+  }
+
+  function initWebSocket() {
+    initCameraWebSocket();
+    initCarInputWebSocket();
+  }
+
+  function sendButtonInput(key, value) {
+    var data = key + "," + value;
+    console.log("Sending: " + data);
+    if (websocketCarInput && websocketCarInput.readyState === WebSocket.OPEN) {
+      websocketCarInput.send(data);
     }
+  }
 
-    function initCarInputWebSocket() {
-      websocketCarInput = new WebSocket(webSocketCarInputUrl);
-      websocketCarInput.onopen = function(event) {
-        console.log("Car Input WebSocket opened");
-        var speedButton = document.getElementById("Speed");
-        sendButtonInput("Speed", speedButton.value);
-        var lightButton = document.getElementById("Light");
-        sendButtonInput("Light", lightButton.value);
-      };
-      websocketCarInput.onclose = function(event) {
-        setTimeout(initCarInputWebSocket, 2000);
-      };
-      websocketCarInput.onmessage = function(event) {
-        console.log("Received from ESP32: " + event.data);
-      };
+  function startMove(key, value) {
+    if (isManualMode) {
+      clearInterval(moveInterval);
+      moveInterval = setInterval(() => {
+        sendButtonInput(key, value);
+      }, 100);
     }
+  }
 
-    function initWebSocket() {
-      initCameraWebSocket();
-      initCarInputWebSocket();
+  function stopMove() {
+    if (isManualMode) {
+      clearInterval(moveInterval);
+      sendButtonInput("MoveCar", "0");
     }
+  }
 
-    function sendButtonInput(key, value) {
-      var data = key + "," + value;
-      console.log("Sending: " + data);
-      if (websocketCarInput && websocketCarInput.readyState === WebSocket.OPEN) {
-        websocketCarInput.send(data);
-      }
+  function toggleMode() {
+    isManualMode = !isManualMode;
+    const toggleButton = document.getElementById("modeToggle");
+    if (isManualMode) {
+      toggleButton.textContent = "Manual Mode: ON";
+      toggleButton.classList.add("off");
+      sendButtonInput("Mode", "1");
+      selectedTarget = null;
+      sendButtonInput("MoveCar", "0");
+    } else {
+      toggleButton.textContent = "Auto Mode: ON";
+      toggleButton.classList.remove("off");
+      sendButtonInput("Mode", "0");
+      selectedTarget = null;
+      sendButtonInput("MoveCar", "0");
+      result.innerHTML = "Please click on a person's bounding box to start tracking.";
     }
+  }
 
-    function startMove(key, value) {
-      if (isManualMode) {
-        clearInterval(moveInterval);
-        moveInterval = setInterval(() => {
-          sendButtonInput(key, value);
-        }, 100);
-      }
+  function resetTarget() {
+    selectedTarget = null;
+    sendButtonInput("MoveCar", "0");
+    result.innerHTML = "Please click on a person's bounding box to start tracking.";
+    console.log("Target reset");
+  }
+
+  async function startDetection() {
+    result.innerHTML = "Loading model...";
+    try {
+      model = await cocoSsd.load();
+      result.innerHTML = isManualMode ? "Model loaded." : "Model loaded. Please click on a person's bounding box to start tracking.";
+      detectLoop();
+    } catch (error) {
+      result.innerHTML = "Failed to load model: " + error.message;
+      console.error(error);
     }
+  }
 
-    function stopMove() {
-      if (isManualMode) {
-        clearInterval(moveInterval);
-        sendButtonInput("MoveCar", "0");
-      }
-    }
+  async function detectLoop() {
+    if (!model) return;
 
-    function toggleMode() {
-      isManualMode = !isManualMode;
-      const toggleButton = document.getElementById("modeToggle");
-      if (isManualMode) {
-        toggleButton.textContent = "Manual Mode: ON";
-        toggleButton.classList.add("off");
-        sendButtonInput("Mode", "1");
-      } else {
-        toggleButton.textContent = "Auto Mode: ON";
-        toggleButton.classList.remove("off");
-        sendButtonInput("Mode", "0");
-      }
-    }
-
-    async function startDetection() {
-      result.innerHTML = "Loading model...";
-      try {
-        model = await cocoSsd.load();
-        result.innerHTML = "Model loaded. Starting detection...";
-        detectLoop();
-      } catch (error) {
-        result.innerHTML = "Failed to load model: " + error.message;
-        console.error(error);
-      }
-    }
-
-    async function detectLoop() {
-      if (!model) return;
-
-      try {
-        const img = document.getElementById('cameraImage');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const predictions = await model.detect(img);
-        drawPredictions(predictions);
-        if (!isManualMode) {
-          sendToESP(predictions);
-        }
-        setTimeout(detectLoop, 50);
-      } catch (error) {
-        result.innerHTML = "Detection error: " + error.message;
-        console.error(error);
-      }
-    }
-
-    function drawPredictions(predictions) {
+    try {
       const img = document.getElementById('cameraImage');
-      ctx.drawImage(img, 0, 0, 320, 240);
-      let personDetected = false;
-      result.innerHTML = "";
-
-      predictions.forEach((pred, i) => {
-        if (pred.class === "person" && pred.score > 0.5) {
-          personDetected = true;
-          const [x, y, width, height] = pred.bbox;
-          ctx.strokeStyle = "#00FFFF";
-          ctx.lineWidth = 2;
-          ctx.strokeRect(x, y, width, height);
-          ctx.fillStyle = "#00FFFF";
-          ctx.font = "16px Arial";
-          ctx.fillText(`Person (${Math.round(pred.score * 100)}%)`, x, y - 5);
-          result.innerHTML += `[${i}] Person: ${Math.round(pred.score * 100)}% at (${Math.round(x)}, ${Math.round(y)}, ${Math.round(width)}, ${Math.round(height)})<br>`;
-        }
-      });
-
-      if (!personDetected) {
-        result.innerHTML = "No person detected.";
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const predictions = await model.detect(img);
+      drawPredictions(predictions);
+      if (!isManualMode) {
+        sendToESP(predictions);
       }
+
+      // Tính FPS
+      frameCount++;
+      const currentTime = Date.now();
+      if (currentTime - lastFpsTime >= 1000) {
+        fps = Math.round(frameCount * 1000 / (currentTime - lastFpsTime));
+        frameCount = 0;
+        lastFpsTime = currentTime;
+      }
+
+      setTimeout(detectLoop, 50);
+    } catch (error) {
+      result.innerHTML = "Detection error: " + error.message;
+      console.error(error);
+    }
+  }
+
+  function drawPredictions(predictions) {
+    const img = document.getElementById('cameraImage');
+    ctx.drawImage(img, 0, 0, 320, 240);
+    let personDetected = false;
+    result.innerHTML = isManualMode ? "" : selectedTarget ? "Tracking selected person." : "Please click on a person's bounding box to start tracking.";
+
+    predictions.forEach((pred, i) => {
+      if (pred.class === "person" && pred.score > 0.5) {
+        personDetected = true;
+        const [x, y, width, height] = pred.bbox;
+        ctx.strokeStyle = selectedTarget && Math.abs(selectedTarget.centerX - (x + width / 2)) < 5 && Math.abs(selectedTarget.centerY - (y + height / 2)) < 5 ? "#FF0000" : "#00FFFF";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, width, height);
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.font = "16px Arial";
+        ctx.fillText(`Person (${Math.round(pred.score * 100)}%)`, x, y - 5);
+      }
+    });
+
+    if (!personDetected && isManualMode) {
+      result.innerHTML = "No person detected.";
     }
 
-    function sendToESP(predictions) {
-      let targetFound = false;
-      let closestX, closestY, closestWidth, closestHeight;
+    // Hiển thị FPS ở góc trên cùng bên trái
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "12px Arial";
+    ctx.fillText(`FPS: ${fps}`, 5, 15);
+  }
 
+  canvas.addEventListener('click', async (event) => {
+    if (isManualMode) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const clickY = event.clientY - rect.top;
+
+    try {
+      const predictions = await model.detect(document.getElementById('cameraImage'));
       for (const pred of predictions) {
         if (pred.class === "person" && pred.score > 0.5) {
           const [x, y, width, height] = pred.bbox;
-          closestX = x;
-          closestY = y;
-          closestWidth = width;
-          closestHeight = height;
-          targetFound = true;
-          console.log("Person detected at: x=" + closestX + ", y=" + closestY + ", w=" + closestWidth + ", h=" + closestHeight);
-          break;
+          if (clickX >= x && clickX <= x + width && clickY >= y && clickY <= y + height) {
+            selectedTarget = {
+              centerX: x + width / 2,
+              centerY: y + height / 2,
+              width,
+              height
+            };
+            result.innerHTML = "Tracking selected person.";
+            console.log("Selected target: ", selectedTarget);
+            break;
+          }
         }
       }
+    } catch (error) {
+      console.error("Error detecting target: ", error);
+    }
+  });
 
-      if (targetFound) {
-        const message = `Person,${Math.round(closestX)},${Math.round(closestY)},${Math.round(closestWidth)},${Math.round(closestHeight)}`;
-        if (websocketCarInput && websocketCarInput.readyState === WebSocket.OPEN) {
-          websocketCarInput.send(message);
-          console.log("Sent to ESP32: " + message);
-        } else {
-          console.log("WebSocket not open");
+  function sendToESP(predictions) {
+    let targetFound = false;
+    let closestX, closestY, closestWidth, closestHeight;
+    let minScore = Infinity;
+    let selectedPrediction = null;
+
+    if (!selectedTarget) {
+      if (websocketCarInput && websocketCarInput.readyState === WebSocket.OPEN) {
+        websocketCarInput.send("MoveCar,0");
+        console.log("Sent to ESP32: MoveCar,0 (No target selected)");
+      }
+      return;
+    }
+
+    for (const pred of predictions) {
+      if (pred.class === "person" && pred.score > 0.5) {
+        const [x, y, width, height] = pred.bbox;
+        const currentCenterX = x + width / 2;
+        const currentCenterY = y + height / 2;
+        const positionDistance = Math.sqrt(
+          Math.pow(currentCenterX - selectedTarget.centerX, 2) +
+          Math.pow(currentCenterY - selectedTarget.centerY, 2)
+        );
+        const sizeDifference = Math.abs(width - selectedTarget.width) +
+                              Math.abs(height - selectedTarget.height);
+        const score = positionDistance + sizeDifference * 0.5;
+
+        if (score < minScore && positionDistance < 100) {
+          minScore = score;
+          selectedPrediction = { x, y, width, height };
         }
-      } else if (websocketCarInput && websocketCarInput.readyState === WebSocket.OPEN) {
-        websocketCarInput.send("MoveCar,0"); // Dừng ngay khi không có person
-        console.log("Sent to ESP32: MoveCar,0");
       }
     }
 
-    window.onload = initWebSocket;
-    document.getElementById("mainTable").addEventListener("touchend", function(event) {
-      event.preventDefault();
-    });
-  </script>
+    if (selectedPrediction) {
+      closestX = selectedPrediction.x;
+      closestY = selectedPrediction.y;
+      closestWidth = selectedPrediction.width;
+      closestHeight = selectedPrediction.height;
+      selectedTarget = {
+        centerX: closestX + closestWidth / 2,
+        centerY: closestY + closestHeight / 2,
+        width: closestWidth,
+        height: closestHeight
+      };
+      targetFound = true;
+      lastDetectionTime = Date.now();
+    }
+
+    if (targetFound) {
+      const message = `Person,${Math.round(closestX)},${Math.round(closestY)},${Math.round(closestWidth)},${Math.round(closestHeight)}`;
+      if (websocketCarInput && websocketCarInput.readyState === WebSocket.OPEN) {
+        websocketCarInput.send(message);
+        console.log("Sent to ESP32: " + message);
+      }
+    } else if (websocketCarInput && websocketCarInput.readyState === WebSocket.OPEN) {
+      websocketCarInput.send("MoveCar,0");
+      console.log("Sent to ESP32: MoveCar,0");
+      if (Date.now() - lastDetectionTime > 5000) {
+        selectedTarget = null;
+        result.innerHTML = "Target lost. Please click on a person's bounding box to start tracking.";
+        console.log("Target lost, resetting selected target");
+      }
+    }
+  }
+
+  window.onload = initWebSocket;
+  document.getElementById("mainTable").addEventListener("touchend", function(event) {
+    event.preventDefault();
+  });
+</script>
 </body>
 </html>
 )HTMLINTERFACE";
@@ -465,20 +584,29 @@ void controlCarBasedOnBoundingBox(int x, int y, int width, int height) {
   const int frameWidth = 320;  
   const int centerX = x + width / 2; 
 
-  const int leftThreshold = frameWidth / 4;      // 0 - 80: Trái
-  const int rightThreshold = 3 * frameWidth / 4; // 240 - 320: Phải
+  // Giữ nguyên ngưỡng giữa: 80 - 240
+   const int leftHeavyThreshold = 60;   // 0-60: Lệch trái nhiều (sử dụng LEFT)
+  const int leftThreshold = 110;       // 60-100: Lệch trái nhẹ (LEFT_SLOW)
+  const int rightThreshold = 210;      // 220-260: Lệch phải nhẹ (RIGHT_SLOW)
+  const int rightHeavyThreshold = 250; // 260-320: Lệch phải nhiều (sử dụng RIGHT)
 
-  Serial.printf("CenterX: %d, LeftThreshold: %d, RightThreshold: %d\n", 
-                centerX, leftThreshold, rightThreshold);
+  Serial.printf("CenterX: %d, LeftHeavy: %d, Left: %d, Right: %d, RightHeavy: %d\n", 
+                centerX, leftHeavyThreshold, leftThreshold, rightThreshold, rightHeavyThreshold);
 
-  if (centerX < leftThreshold) {
-    moveCar(LEFT_SLOW);
-  } 
-  else if (centerX > rightThreshold) {
-    moveCar(RIGHT_SLOW);
-  } 
+  if (centerX < leftHeavyThreshold) {         // Lệch trái nhiều
+    moveCar(LEFT);                            // Xoay trái mạnh (sử dụng LEFT)
+  }
+  else if (centerX < leftThreshold) {         // Lệch trái nhẹ
+    moveCar(LEFT_SLOW);                       // Xoay trái chậm
+  }
+  else if (centerX > rightHeavyThreshold) {   // Lệch phải nhiều
+    moveCar(RIGHT);                           // Xoay phải mạnh (sử dụng RIGHT)
+  }
+  else if (centerX > rightThreshold) {        // Lệch phải nhẹ
+    moveCar(RIGHT_SLOW);                      // Xoay phải chậm
+  }
   else {
-    moveCar(UP); // Đi thẳng tới khi person ở giữa
+    moveCar(UP);                              // Đi thẳng khi ở giữa
   }
 }
 
